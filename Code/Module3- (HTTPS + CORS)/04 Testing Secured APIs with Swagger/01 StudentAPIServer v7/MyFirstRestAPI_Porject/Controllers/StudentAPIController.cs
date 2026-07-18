@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 
 namespace StudentApi.Controllers 
 {
+    [Authorize] //This means: Every endpoint inside this controller, Requires a valid JWT
     [ApiController] // Marks the class as a Web API controller with enhanced features.
   //  [Route("[controller]")] // Sets the route for this controller to "students", based on the controller name.
     [Route("api/Students")]
