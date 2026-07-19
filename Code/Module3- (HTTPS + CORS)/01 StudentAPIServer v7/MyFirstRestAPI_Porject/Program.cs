@@ -2,12 +2,13 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using Microsoft.AspNetCore.Authorization;
 
 // Create the application builder.
 // This is where we register services (DI container) and configure the app.
 var builder = WebApplication.CreateBuilder(args);
 
-// ===============================a
+// ===============================
 // 1) Authentication (JWT Bearer)
 // ===============================
 //
@@ -45,14 +46,27 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 
+
+
 // ===============================
-// 2) Authorization
+// 2) Authorization (Updated)
 // ===============================
 //
 // This enables authorization features such as:
 // - [Authorize]
 // - [Authorize(Roles="Admin")]
-builder.Services.AddAuthorization();
+// - [Authorize(Policy="StudentOwnerOrAdmin")]
+builder.Services.AddAuthorization(options =>
+{
+    // Ownership policy: Student can access only their own record, Admin can access any record.
+    options.AddPolicy("StudentOwnerOrAdmin", policy =>
+        policy.Requirements.Add(new StudentOwnerOrAdminRequirement()));
+});
+
+// Register the policy handler that contains the ownership logic.
+builder.Services.AddSingleton<IAuthorizationHandler, StudentOwnerOrAdminHandler>();
+
+
 
 // Register controller support (enables [ApiController] controllers).
 builder.Services.AddControllers();
@@ -129,20 +143,16 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-//step 1
 // Redirect HTTP requests to HTTPS.
 app.UseHttpsRedirection();
 
-//step 2
 // Authentication must run before authorization.
 // Authentication identifies the user (reads token and builds User identity).
 app.UseAuthentication();
 
-//step 3
 // Authorization checks access rules (e.g., [Authorize], roles, policies).
 app.UseAuthorization();
 
-//step 4
 // Map controller routes (e.g., /api/Auth/login, /api/Students/All).
 app.MapControllers();
 
