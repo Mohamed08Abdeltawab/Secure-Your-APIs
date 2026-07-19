@@ -14,7 +14,7 @@ namespace StudentApi.Controllers
     public class StudentsController : ControllerBase // Declare the controller class inheriting from ControllerBase.
     {
 
-        
+        [Authorize(Roles = "Admin")]//compare in claim in login and get role of student from it
         [HttpGet("All", Name ="GetAllStudents")] // Marks this method to respond to HTTP GET requests.
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -23,15 +23,15 @@ namespace StudentApi.Controllers
         {
             //StudentDataSimulation.StudentsList.Clear();
 
-            if (StudentDataSimulation.StudentsList.Count == 0) 
+            if (StudentDataSimulation.StudentsList.Count == 0) //if there is no data return 404 not found with message "No Students Found!"
             {
                 return NotFound("No Students Found!");
             }
             return Ok(StudentDataSimulation.StudentsList); // Returns the list of students.
         }
 
+        [AllowAnonymous]
         [HttpGet("Passed",Name = "GetPassedStudents")]
-
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
 
@@ -51,8 +51,8 @@ namespace StudentApi.Controllers
             return Ok(passedStudents); // Return the list of students who passed.
         }
 
+        [AllowAnonymous]
         [HttpGet("AverageGrade", Name = "GetAverageGrade")]
-
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
 
@@ -71,8 +71,8 @@ namespace StudentApi.Controllers
         }
 
 
+        [Authorize(Roles = "Admin")]
         [HttpGet("{id}", Name = "GetStudentById")]
-        
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -95,7 +95,8 @@ namespace StudentApi.Controllers
         }
 
         //for add new we use Http Post
-        
+
+        [Authorize(Roles = "Admin")]
         [HttpPost(Name = "AddStudent")]
         [ProducesResponseType(StatusCodes.Status201Created)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -116,6 +117,7 @@ namespace StudentApi.Controllers
         }
 
         //here we use HttpDelete method
+        [Authorize(Roles = "Admin")]
         [HttpDelete("{id}", Name = "DeleteStudent")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -138,6 +140,7 @@ namespace StudentApi.Controllers
         }
 
         //here we use http put method for update
+        [Authorize(Roles = "Admin")]
         [HttpPut("{id}", Name = "UpdateStudent")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]

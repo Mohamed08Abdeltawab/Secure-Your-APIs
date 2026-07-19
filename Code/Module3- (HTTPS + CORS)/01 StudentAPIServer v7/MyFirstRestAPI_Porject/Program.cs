@@ -7,7 +7,7 @@ using System.Text;
 // This is where we register services (DI container) and configure the app.
 var builder = WebApplication.CreateBuilder(args);
 
-// ===============================
+// ===============================a
 // 1) Authentication (JWT Bearer)
 // ===============================
 //
@@ -129,16 +129,20 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+//step 1
 // Redirect HTTP requests to HTTPS.
 app.UseHttpsRedirection();
 
+//step 2
 // Authentication must run before authorization.
 // Authentication identifies the user (reads token and builds User identity).
 app.UseAuthentication();
 
+//step 3
 // Authorization checks access rules (e.g., [Authorize], roles, policies).
 app.UseAuthorization();
 
+//step 4
 // Map controller routes (e.g., /api/Auth/login, /api/Students/All).
 app.MapControllers();
 
