@@ -72,7 +72,8 @@ namespace StudentApi.Controllers
                 issuer: "StudentApi",
                 audience: "StudentApiUsers",
                 claims: claims,
-                expires: DateTime.UtcNow.AddMinutes(30),
+                //expires: DateTime.UtcNow.AddMinutes(30),
+                expires: DateTime.UtcNow.AddSeconds(10),
                 signingCredentials: creds
             );
 
@@ -139,7 +140,7 @@ namespace StudentApi.Controllers
         new Claim(ClaimTypes.NameIdentifier, student.Id.ToString()),
         new Claim(ClaimTypes.Email, student.Email),
         new Claim(ClaimTypes.Role, student.Role)
-        };
+    };
 
             var key = new SymmetricSecurityKey(
                 Encoding.UTF8.GetBytes("THIS_IS_A_VERY_SECRET_KEY_123456"));

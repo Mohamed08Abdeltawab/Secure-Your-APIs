@@ -42,7 +42,13 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             // The symmetric secret key used to validate the token signature.
             // This MUST be the same key used to sign tokens during login.
             IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes("THIS_IS_A_VERY_SECRET_KEY_123456"))
+                Encoding.UTF8.GetBytes("THIS_IS_A_VERY_SECRET_KEY_123456")),
+            ClockSkew = TimeSpan.Zero // ✅ IMPORTANT 
+            /* Default JWT ClockSkew is still allowing expired tokens: Even if exp is 10 seconds, 
+             ASP.NET Core JWT validation often allows a grace period (ClockSkew).
+             So your API might still accept the token and return 200, not 401.
+             */
+
         };
     });
 
