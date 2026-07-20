@@ -3,10 +3,13 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 
 // Create the application builder.
 // This is where we register services (DI container) and configure the app.
 var builder = WebApplication.CreateBuilder(args);
+
 
 // ===============================
 // 1) Authentication (JWT Bearer)
@@ -72,6 +75,25 @@ builder.Services.AddAuthorization(options =>
 // Register the policy handler that contains the ownership logic.
 builder.Services.AddSingleton<IAuthorizationHandler, StudentOwnerOrAdminHandler>();
 
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    options.AddPolicy("AuthLimiter", httpContext =>
+    {
+        var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: ip,
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            });
+    });
+});
 
 
 // Register controller support (enables [ApiController] controllers).
@@ -151,6 +173,19 @@ if (app.Environment.IsDevelopment())
 
 // Redirect HTTP requests to HTTPS.
 app.UseHttpsRedirection();
+
+app.UseRateLimiter();
+
+app.Use(async (context, next) =>
+{
+    await next();
+
+    if (context.Response.StatusCode == StatusCodes.Status429TooManyRequests)
+    {
+        await context.Response.WriteAsync("Too many login attempts. Please try again later.");
+    }
+});
+
 
 // Authentication must run before authorization.
 // Authentication identifies the user (reads token and builds User identity).

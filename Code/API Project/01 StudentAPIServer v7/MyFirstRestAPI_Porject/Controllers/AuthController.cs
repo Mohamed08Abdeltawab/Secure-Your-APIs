@@ -7,6 +7,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Text;
 using StudentApi.DTOs.Auth;
 using System.Security.Cryptography;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace StudentApi.Controllers
 {
@@ -21,6 +22,7 @@ namespace StudentApi.Controllers
         // - AccessToken (JWT) for calling secured APIs
         // - RefreshToken for renewing the access token later
         [HttpPost("login")]
+        [EnableRateLimiting("AuthLimiter")]
         public IActionResult Login([FromBody] LoginRequest request)
         {
             // Step 1: Find the student by email from the in-memory data store.
@@ -116,6 +118,7 @@ namespace StudentApi.Controllers
 
         //refresh endpint
         [HttpPost("refresh")]
+        [EnableRateLimiting("AuthLimiter")]
         public IActionResult Refresh([FromBody] RefreshRequest request)
         {
             var student = StudentDataSimulation.StudentsList
