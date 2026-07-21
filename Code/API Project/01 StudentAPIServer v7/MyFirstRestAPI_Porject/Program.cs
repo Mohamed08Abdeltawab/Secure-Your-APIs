@@ -19,6 +19,12 @@ var builder = WebApplication.CreateBuilder(args);
 // ===============================
 // 1) Authentication (JWT Bearer)
 // ===============================
+var secretKey = builder.Configuration["JWT_SECRET_KEY"];
+
+if (string.IsNullOrWhiteSpace(secretKey))
+{
+    throw new Exception("JWT secret key is not configured.");
+}
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -33,7 +39,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidAudience = "StudentApiUsers",
 
             IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes("THIS_IS_A_VERY_SECRET_KEY_123456")),
+                Encoding.UTF8.GetBytes(secretKey)),
 
             ClockSkew = TimeSpan.Zero
         };
