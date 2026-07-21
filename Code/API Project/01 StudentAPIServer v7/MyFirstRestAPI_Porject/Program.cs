@@ -4,6 +4,7 @@ using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using System.Security.Claims;
+using Azure.Identity;
 
 
 // ✅ NEW (Rate limiting)
@@ -19,12 +20,26 @@ var builder = WebApplication.CreateBuilder(args);
 // ===============================
 // 1) Authentication (JWT Bearer)
 // ===============================
+//method1
 var secretKey = builder.Configuration["JWT_SECRET_KEY"];
 
 if (string.IsNullOrWhiteSpace(secretKey))
 {
     throw new Exception("JWT secret key is not configured.");
 }
+
+//method 2
+var keyVaultUrl = builder.Configuration["KeyVault:Url"];
+
+if (!string.IsNullOrWhiteSpace(keyVaultUrl))
+{
+    builder.Configuration.AddAzureKeyVault(
+        new Uri(keyVaultUrl),
+        new DefaultAzureCredential());
+}
+
+var secretKey2 = builder.Configuration["JwtSigningKey"];
+
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
