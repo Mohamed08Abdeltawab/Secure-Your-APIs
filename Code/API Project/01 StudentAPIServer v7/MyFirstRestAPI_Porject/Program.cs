@@ -3,83 +3,64 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using Microsoft.AspNetCore.Authorization;
+using System.Security.Claims;
+
+
+// ✅ NEW (Rate limiting)
 using Microsoft.AspNetCore.RateLimiting;
 using System.Threading.RateLimiting;
 
-// Create the application builder.
-// This is where we register services (DI container) and configure the app.
-var builder = WebApplication.CreateBuilder(args);
+// ✅ OPTIONAL (Only if behind proxy like Nginx/Cloudflare/IIS reverse proxy)
+// using Microsoft.AspNetCore.HttpOverrides;
 
+// Create the application builder.
+var builder = WebApplication.CreateBuilder(args);
 
 // ===============================
 // 1) Authentication (JWT Bearer)
 // ===============================
-//
-// This tells ASP.NET Core that the API will use JWT Bearer tokens.
-// After this is configured, the middleware can validate tokens sent in:
-// Authorization: Bearer <token>
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
-        // TokenValidationParameters define what "valid token" means for this API.
         options.TokenValidationParameters = new TokenValidationParameters
         {
-            // Ensures the token was issued by a trusted issuer value.
             ValidateIssuer = true,
-
-            // Ensures the token was intended for this API (audience check).
             ValidateAudience = true,
-
-            // Ensures the token has not expired.
             ValidateLifetime = true,
-
-            // Ensures the token's signature matches the signing key (prevents forgery).
             ValidateIssuerSigningKey = true,
 
-            // Must match the issuer used when generating the JWT in the login endpoint.
             ValidIssuer = "StudentApi",
-
-            // Must match the audience used when generating the JWT in the login endpoint.
             ValidAudience = "StudentApiUsers",
 
-            // The symmetric secret key used to validate the token signature.
-            // This MUST be the same key used to sign tokens during login.
             IssuerSigningKey = new SymmetricSecurityKey(
                 Encoding.UTF8.GetBytes("THIS_IS_A_VERY_SECRET_KEY_123456")),
-            ClockSkew = TimeSpan.Zero // ✅ IMPORTANT 
-            /* Default JWT ClockSkew is still allowing expired tokens: Even if exp is 10 seconds, 
-             ASP.NET Core JWT validation often allows a grace period (ClockSkew).
-             So your API might still accept the token and return 200, not 401.
-             */
 
+            ClockSkew = TimeSpan.Zero
         };
     });
 
-
-
 // ===============================
-// 2) Authorization (Updated)
+// 2) Authorization
 // ===============================
-//
-// This enables authorization features such as:
-// - [Authorize]
-// - [Authorize(Roles="Admin")]
-// - [Authorize(Policy="StudentOwnerOrAdmin")]
 builder.Services.AddAuthorization(options =>
 {
-    // Ownership policy: Student can access only their own record, Admin can access any record.
     options.AddPolicy("StudentOwnerOrAdmin", policy =>
         policy.Requirements.Add(new StudentOwnerOrAdminRequirement()));
 });
 
-// Register the policy handler that contains the ownership logic.
 builder.Services.AddSingleton<IAuthorizationHandler, StudentOwnerOrAdminHandler>();
 
+// ✅ NEW
+// ===============================
+// 2.5) Rate Limiting (Login + Refresh)
+// ===============================
 
 builder.Services.AddRateLimiter(options =>
 {
+    // Always return 429 when blocked
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
+    // Policy: max 5 requests per 1 minute per IP
     options.AddPolicy("AuthLimiter", httpContext =>
     {
         var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
@@ -95,107 +76,103 @@ builder.Services.AddRateLimiter(options =>
     });
 });
 
-
-// Register controller support (enables [ApiController] controllers).
+// Register controllers
 builder.Services.AddControllers();
 
 // ===============================
 // 3) Swagger / OpenAPI
 // ===============================
-//
-// AddEndpointsApiExplorer discovers endpoints for Swagger generation.
 builder.Services.AddEndpointsApiExplorer();
 
-// Configure Swagger generation and add JWT support to Swagger UI.
-// This makes Swagger show the "Authorize" button and allows sending Bearer tokens.
 builder.Services.AddSwaggerGen(options =>
 {
-    // Define the "Bearer" security scheme.
-    // Swagger will use it to display an input box for Authorization header.
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
-        // The header name where the JWT should be placed.
         Name = "Authorization",
-
-        // HTTP authentication scheme (Authorization header).
         Type = SecuritySchemeType.Http,
-
-        // The scheme name must be "Bearer" for JWT Bearer tokens.
         Scheme = "Bearer",
-
-        // Optional, but helps documentation and UI.
         BearerFormat = "JWT",
-
-        // Token is sent in the request header.
         In = ParameterLocation.Header,
-
-        // Instruction shown in Swagger UI.
         Description = "Enter: Bearer {your JWT token}"
     });
 
-    // Apply the Bearer scheme globally so secured endpoints in Swagger
-    // can automatically include the Authorization header after you authorize.
     options.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
         {
             new OpenApiSecurityScheme
             {
-                // Reference the security scheme defined above by its Id: "Bearer".
                 Reference = new OpenApiReference
                 {
                     Type = ReferenceType.SecurityScheme,
                     Id = "Bearer"
                 }
             },
-
-            // No specific scopes are required for JWT Bearer in this setup.
             new string[] {}
         }
     });
 });
 
-// Build the application.
-// After Build(), services are finalized and we configure middleware.
 var app = builder.Build();
 
 // ===============================
 // 4) Middleware Pipeline
 // ===============================
-//
-// Middleware order matters. Requests pass through middleware in the order registered.
-
-// Enable Swagger UI only in development environment.
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
-// Redirect HTTP requests to HTTPS.
+// ✅ OPTIONAL (Only if behind proxy, enable this BEFORE rate limiting)
+// app.UseForwardedHeaders(new ForwardedHeadersOptions
+// {
+//     ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+// });
+
 app.UseHttpsRedirection();
 
+// ✅ NEW: Rate limiting should run early (before controllers)
 app.UseRateLimiter();
 
+//Return a safe 429 message (without revealing limits)
 app.Use(async (context, next) =>
 {
     await next();
 
     if (context.Response.StatusCode == StatusCodes.Status429TooManyRequests)
     {
-        await context.Response.WriteAsync("Too many login attempts. Please try again later.");
+        await context.Response.WriteAsync("Too many attempts. Please try again later.");
     }
 });
 
 
-// Authentication must run before authorization.
-// Authentication identifies the user (reads token and builds User identity).
-app.UseAuthentication();
 
-// Authorization checks access rules (e.g., [Authorize], roles, policies).
+app.UseAuthentication();
 app.UseAuthorization();
 
-// Map controller routes (e.g., /api/Auth/login, /api/Students/All).
+// ✅  Global 403 logging middleware 
+app.Use(async (context, next) =>
+{
+    await next();
+
+    if (context.Response.StatusCode == StatusCodes.Status403Forbidden)
+    {
+        var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "anonymous";
+        var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var path = context.Request.Path.ToString();
+
+        // ✅ Centralized security log for authorization abuse
+        app.Logger.LogWarning(
+            "Forbidden access. UserId={UserId}, Path={Path}, IP={IP}",
+            userId,
+            path,
+            ip
+        );
+    }
+});
+
+
+
 app.MapControllers();
 
-// Start the web application.
 app.Run();

@@ -8,6 +8,8 @@ using System.Text;
 using StudentApi.DTOs.Auth;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Logging;
+
 
 namespace StudentApi.Controllers
 {
@@ -15,87 +17,150 @@ namespace StudentApi.Controllers
     // such as logging in and issuing JWT tokens (and refresh tokens).
     [ApiController]
     [Route("api/[controller]")]
+
     public class AuthController : ControllerBase
     {
+
+        // we added this for logger...
+        private readonly ILogger<AuthController> _logger;
+
+        public AuthController(ILogger<AuthController> logger)
+        {
+            _logger = logger;
+        }
+
+
+
         // This endpoint handles user login.
         // It verifies credentials and returns:
         // - AccessToken (JWT) for calling secured APIs
         // - RefreshToken for renewing the access token later
         [HttpPost("login")]
+        //We ebable rate limitting
         [EnableRateLimiting("AuthLimiter")]
+
         public IActionResult Login([FromBody] LoginRequest request)
         {
-            // Step 1: Find the student by email from the in-memory data store.
-            // Email acts as the unique login identifier.
+            // ✅ Capture caller IP once (used in all logs for tracing)
+            // 📌 We store IP as a string and default to "unknown" to avoid null issues.
+            var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+            // ===============================
+            // Step 1: Find student by email
+            // ===============================
+            // Email is the unique login identifier in this system.
             var student = StudentDataSimulation.StudentsList
                 .FirstOrDefault(s => s.Email == request.Email);
 
-            // If no student is found with the given email,
-            // return 401 Unauthorized without revealing which field was wrong.
+            // ===============================
+            // Failure Path #1: Email not found
+            // ===============================
+            // ✅ Security logging: record the failure safely
+            // ✅ We log the Email + IP only (NO password, NO tokens).
+            // 📌 This helps detect brute-force / credential stuffing attempts.
             if (student == null)
-                return Unauthorized("Invalid credentials");
+            {
+                _logger.LogWarning(
+                    "Failed login attempt (email not found). Email={Email}, IP={IP}",
+                    request.Email,
+                    ip
+                );
 
-            // Step 2: Verify the provided password against the stored hash.
-            // BCrypt handles hashing and salt internally.
+                // Return generic message to avoid revealing whether email exists.
+                return Unauthorized("Invalid credentials");
+            }
+
+            // ===============================
+            // Step 2: Verify password hash
+            // ===============================
+            // BCrypt.Verify checks the provided password against the stored hash.
+            // ✅ We never log passwords or hashes.
             bool isValidPassword =
                 BCrypt.Net.BCrypt.Verify(request.Password, student.PasswordHash);
 
-            // If the password does not match the stored hash,
-            // return 401 Unauthorized.
+            // ===============================
+            // Failure Path #2: Password invalid
+            // ===============================
+            // ✅ Security logging: record repeated password failures
+            // 📌 This helps detect brute-force attempts on known emails.
             if (!isValidPassword)
-                return Unauthorized("Invalid credentials");
+            {
+                _logger.LogWarning(
+                    "Failed login attempt (bad password). Email={Email}, IP={IP}",
+                    request.Email,
+                    ip
+                );
 
-            // Step 3: Create claims that represent the authenticated user's identity.
-            // These claims will be embedded inside the JWT.
+                // Return generic message to avoid revealing which field is wrong.
+                return Unauthorized("Invalid credentials");
+            }
+
+            // ===============================
+            // Step 3: Build identity claims
+            // ===============================
+            // These claims are embedded in the JWT and later used for authorization.
             var claims = new[]
             {
-                // Unique identifier for the student
-                new Claim(ClaimTypes.NameIdentifier, student.Id.ToString()),
+        new Claim(ClaimTypes.NameIdentifier, student.Id.ToString()),
+        new Claim(ClaimTypes.Email, student.Email),
+        new Claim(ClaimTypes.Role, student.Role)
+    };
 
-                // Student email address
-                new Claim(ClaimTypes.Email, student.Email),
-
-                // Role (Student or Admin) used later for authorization
-                new Claim(ClaimTypes.Role, student.Role)
-            };
-
-            // Step 4: Create the symmetric security key used to sign the JWT.
-            // This key must match the key used in JWT validation middleware.
+            // ===============================
+            // Step 4: Create signing key
+            // ===============================
+            // 🔒 IMPORTANT: In production, move this key to configuration/secrets
+            // (e.g., appsettings.json + environment secrets / KeyVault).
             var key = new SymmetricSecurityKey(
                 Encoding.UTF8.GetBytes("THIS_IS_A_VERY_SECRET_KEY_123456"));
 
-            // Step 5: Define the signing credentials.
-            // This specifies the algorithm used to sign the token.
+            // Step 5: Token signing credentials
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
-            // Step 6: Create the JWT access token (short-lived).
-            // The token includes issuer, audience, claims, expiration, and signature.
+            // ===============================
+            // Step 6: Create the JWT access token
+            // ===============================
             var token = new JwtSecurityToken(
                 issuer: "StudentApi",
                 audience: "StudentApiUsers",
                 claims: claims,
-                //expires: DateTime.UtcNow.AddMinutes(30),
-                expires: DateTime.UtcNow.AddSeconds(10),
+                expires: DateTime.UtcNow.AddMinutes(30),
                 signingCredentials: creds
             );
 
-            // Step 7: Serialize the JWT into a string.
-            // This is what the client will send in the Authorization header.
+            // Step 7: Serialize JWT to string
             var accessToken = new JwtSecurityTokenHandler().WriteToken(token);
 
-            // Step 8: Create refresh token (secure random).
-            // Refresh token is used to request a new access token later.
+            // ===============================
+            // Step 8: Create refresh token
+            // ===============================
+            // ✅ Generate secure random refresh token.
+            // ❌ Never log refresh tokens (they are secrets).
             var refreshToken = GenerateRefreshToken();
 
-            // Step 9: Store refresh token securely (hash + expiry + not revoked).
-            // We store the HASH only (never store the raw refresh token).
+            // ===============================
+            // Step 9: Store refresh token securely
+            // ===============================
+            // ✅ Store HASH only (never store raw refresh token in server storage).
             student.RefreshTokenHash = BCrypt.Net.BCrypt.HashPassword(refreshToken);
             student.RefreshTokenExpiresAt = DateTime.UtcNow.AddDays(7);
             student.RefreshTokenRevokedAt = null;
 
-            // Step 10: Return both tokens to the client.
-            // AccessToken is used for API calls.
-            // RefreshToken is used only for renewing sessions.
+            // ===============================
+            // Step 10: Optional success log (low noise)
+            // ===============================
+            // ✅ Safe success log: user ID + email + IP only (NO tokens)
+            // 📌 Useful for later investigations (timeline reconstruction).
+            _logger.LogInformation(
+                "Successful login. UserId={UserId}, Email={Email}, IP={IP}",
+                student.Id,
+                student.Email,
+                ip
+            );
+
+            // Return tokens to client:
+            // - AccessToken: used for API calls
+            // - RefreshToken: used to renew access token later
             return Ok(new TokenResponse
             {
                 AccessToken = accessToken,
@@ -116,28 +181,90 @@ namespace StudentApi.Controllers
         }
 
 
-        //refresh endpint
         [HttpPost("refresh")]
         [EnableRateLimiting("AuthLimiter")]
         public IActionResult Refresh([FromBody] RefreshRequest request)
         {
+            // ✅ Capture caller IP once (used in all logs for tracing)
+            var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+            // ===============================
+            // Step 1: Find student by email
+            // ===============================
             var student = StudentDataSimulation.StudentsList
                 .FirstOrDefault(s => s.Email == request.Email);
 
+            // ===============================
+            // Failure Path #1: Email not found
+            // ===============================
+            // ✅ Safe log: Email + IP only
+            // 📌 Helps detect refresh probing / abuse attempts.
             if (student == null)
+            {
+                _logger.LogWarning(
+                    "Invalid refresh attempt (email not found). Email={Email}, IP={IP}",
+                    request.Email,
+                    ip
+                );
+
                 return Unauthorized("Invalid refresh request");
+            }
 
+            // ===============================
+            // Failure Path #2: Token already revoked
+            // ===============================
+            // ✅ Safe log: UserId + Email + IP only
+            // 📌 Indicates possible reuse of an old token (suspicious).
             if (student.RefreshTokenRevokedAt != null)
+            {
+                _logger.LogWarning(
+                    "Refresh attempt using revoked token. UserId={UserId}, Email={Email}, IP={IP}",
+                    student.Id,
+                    student.Email,
+                    ip
+                );
+
                 return Unauthorized("Refresh token is revoked");
+            }
 
+            // ===============================
+            // Failure Path #3: Token expired
+            // ===============================
+            // ✅ Safe log: UserId + Email + IP only
+            // 📌 Expired refresh usage can be normal or automated retry — log helps visibility.
             if (student.RefreshTokenExpiresAt == null || student.RefreshTokenExpiresAt <= DateTime.UtcNow)
-                return Unauthorized("Refresh token expired");
+            {
+                _logger.LogWarning(
+                    "Refresh attempt using expired token. UserId={UserId}, Email={Email}, IP={IP}",
+                    student.Id,
+                    student.Email,
+                    ip
+                );
 
+                return Unauthorized("Refresh token expired");
+            }
+
+            // ===============================
+            // Failure Path #4: Invalid refresh token value
+            // ===============================
+            // ❌ Never log the raw refresh token
+            // ✅ Only log outcome + identity data
             bool refreshValid = BCrypt.Net.BCrypt.Verify(request.RefreshToken, student.RefreshTokenHash);
             if (!refreshValid)
-                return Unauthorized("Invalid refresh token");
+            {
+                _logger.LogWarning(
+                    "Invalid refresh token attempt. UserId={UserId}, Email={Email}, IP={IP}",
+                    student.Id,
+                    student.Email,
+                    ip
+                );
 
-            // Issue NEW access token (same claims & signing settings as login)
+                return Unauthorized("Invalid refresh token");
+            }
+
+            // ===============================
+            // Success: Issue NEW access token (same claims & signing settings as login)
+            // ===============================
             var claims = new[]
             {
         new Claim(ClaimTypes.NameIdentifier, student.Id.ToString()),
@@ -154,18 +281,28 @@ namespace StudentApi.Controllers
                 issuer: "StudentApi",
                 audience: "StudentApiUsers",
                 claims: claims,
-                //expires: DateTime.UtcNow.AddMinutes(30),
-                expires: DateTime.UtcNow.AddSeconds(10),
+                expires: DateTime.UtcNow.AddMinutes(30),
                 signingCredentials: creds
             );
 
             var newAccessToken = new JwtSecurityTokenHandler().WriteToken(jwt);
 
-            // Rotation: replace refresh token
+            // ===============================
+            // Rotation: Replace refresh token
+            // ===============================
+            // ✅ Token rotation reduces damage if a refresh token is stolen.
             var newRefreshToken = GenerateRefreshToken();
             student.RefreshTokenHash = BCrypt.Net.BCrypt.HashPassword(newRefreshToken);
             student.RefreshTokenExpiresAt = DateTime.UtcNow.AddDays(7);
             student.RefreshTokenRevokedAt = null;
+
+            // ✅ Optional low-noise success log (safe)
+            _logger.LogInformation(
+                "Refresh succeeded. UserId={UserId}, Email={Email}, IP={IP}",
+                student.Id,
+                student.Email,
+                ip
+            );
 
             return Ok(new TokenResponse
             {
